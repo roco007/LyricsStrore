@@ -297,6 +297,19 @@ const App = (): React.JSX.Element => {
     return genres.sort();
   };
 
+  const getRandomFunnyMessage = () => {
+    const messages = [
+      "Your music library is feeling a bit lonely! Time to add some tunes and make it sing! 🎤",
+      "No songs yet? That's music to my ears... wait, that doesn't make sense! 🎵",
+      "The silence is deafening! Let's add some lyrics to break it! 🎶",
+      "Your playlist is emptier than a karaoke bar at 3 AM! Time to fill it up! 🎤",
+      "Even crickets would be jealous of how quiet it is here! Add some songs! 🦗🎵",
+      "This empty space is giving me stage fright! Help me out with some lyrics! 🎭",
+      "Your music collection is so empty, it's echoing! Let's add some substance! 🏔️🎵"
+    ];
+    return messages[Math.floor(Math.random() * messages.length)];
+  };
+
   // Filter genres based on input
   const filterGenres = (input: string) => {
     if (!input.trim()) {
@@ -600,11 +613,33 @@ const App = (): React.JSX.Element => {
   };
 
   const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <Text style={styles.emptyIcon}>🎵</Text>
-      <Text style={[styles.emptyText, { color: currentTheme.textSecondary }]}>
-        {searchTerm ? 'No lyrics found matching your search.' : 'No lyrics found. Create your first lyrics!'}
-      </Text>
+    <View style={[styles.emptyState, { backgroundColor: currentTheme.background }]}>
+      <View style={[styles.emptyStateContainer, { backgroundColor: currentTheme.surface }]}>
+        <View style={[styles.emptyIconContainer, { backgroundColor: currentTheme.primary + '15' }]}>
+          <Text style={[styles.emptyIcon, { color: currentTheme.primary }]}>🎵</Text>
+        </View>
+        <Text style={[styles.emptyTitle, { color: currentTheme.text }]}>
+          {searchTerm ? 'No Results Found' : '🎵 Waiting for songs to be added... 🎵'}
+        </Text>
+        <Text style={[styles.emptySubtitle, { color: currentTheme.textSecondary }]}>
+          {searchTerm 
+            ? 'Try adjusting your search terms or browse all lyrics' 
+            : getRandomFunnyMessage()
+          }
+        </Text>
+        {!searchTerm && (
+          <View style={styles.emptyActions}>
+            <TouchableOpacity 
+              style={[styles.emptyActionButton, { backgroundColor: currentTheme.primary }]}
+              onPress={() => setCurrentView('editor')}
+            >
+              <Text style={[styles.emptyActionText, { color: currentTheme.buttonText }]}>
+                + Create First Lyrics
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 
@@ -1071,9 +1106,18 @@ const App = (): React.JSX.Element => {
         columnWrapperStyle={styles.row}
         contentContainerStyle={getLyricsByGenre(selectedGenre).length === 0 ? styles.emptyContainer : styles.gridContainer}
         ListEmptyComponent={() => (
-          <View style={styles.emptyState}>
-            <Text style={[styles.emptyIcon, { color: currentTheme.accent }]}>🎵</Text>
-            <Text style={[styles.emptyText, { color: currentTheme.textSecondary }]}>No songs in {selectedGenre} genre yet.</Text>
+          <View style={[styles.emptyState, { backgroundColor: currentTheme.background }]}>
+            <View style={[styles.emptyStateContainer, { backgroundColor: currentTheme.surface }]}>
+              <View style={[styles.emptyIconContainer, { backgroundColor: currentTheme.primary + '15' }]}>
+                <Text style={[styles.emptyIcon, { color: currentTheme.primary }]}>🎵</Text>
+              </View>
+              <Text style={[styles.emptyTitle, { color: currentTheme.text }]}>
+                🎭 No {selectedGenre} Songs Yet
+              </Text>
+              <Text style={[styles.emptySubtitle, { color: currentTheme.textSecondary }]}>
+                The {selectedGenre} section is taking a coffee break! ☕ Add some songs to wake it up! 🎶
+              </Text>
+            </View>
           </View>
         )}
       />
@@ -1338,14 +1382,63 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
+    padding: 20,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    borderRadius: 20,
+    marginHorizontal: 20,
+    maxWidth: 320,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  emptyIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
   },
   emptyIcon: {
-    fontSize: 64,
-    marginBottom: 20,
-    color: '#8b5cf6',
+    fontSize: 48,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 32,
+  },
+  emptyActions: {
+    width: '100%',
+  },
+  emptyActionButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyActionText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   emptyText: {
     fontSize: 18,
