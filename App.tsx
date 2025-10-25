@@ -649,7 +649,12 @@ And the world will be as one
   const pickAndCopyAudio = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['audio/mpeg', 'audio/mp3', 'audio/m4a', 'audio/wav', 'audio/ogg'],
+        type: [
+          'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/x-m4a',
+          'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/ogg', 'audio/vorbis',
+          'audio/flac', 'audio/3gp', 'audio/amr', 'audio/aiff', 'audio/caf',
+          'audio/x-aiff', 'audio/x-caf'
+        ],
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -752,8 +757,12 @@ And the world will be as one
         Alert.alert('Error', 'Audio file not found. The file may have been moved or deleted.');
       } else if (errorMessage.includes('permission')) {
         Alert.alert('Error', 'Permission denied. Cannot access the audio file.');
+      } else if (errorMessage.includes('format') || errorMessage.includes('codec') || errorMessage.includes('unsupported')) {
+        Alert.alert('Unsupported Format', 'This audio format is not supported on your device. Please try using MP3, M4A, or WAV format.');
+      } else if (errorMessage.includes('network') || errorMessage.includes('connection')) {
+        Alert.alert('Network Error', 'Unable to load audio file. Please check your internet connection.');
       } else {
-        Alert.alert('Error', 'Failed to play audio. Please check if the audio file is valid and supported.');
+        Alert.alert('Audio Error', 'Failed to play audio. The file may be corrupted or in an unsupported format. Try converting to MP3 or M4A format.');
       }
       
       setIsPlaying(false);
