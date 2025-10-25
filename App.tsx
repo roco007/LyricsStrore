@@ -93,6 +93,7 @@ const darkTheme: ThemeColors = {
 const App = (): React.JSX.Element => {
   const [currentView, setCurrentView] = useState<ViewType>('list');
   const [previousView, setPreviousView] = useState<ViewType | null>(null);
+  const [originalView, setOriginalView] = useState<ViewType | null>(null);
   const [allLyrics, setAllLyrics] = useState<Lyrics[]>([]);
   const [currentLyrics, setCurrentLyrics] = useState<Lyrics | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -178,6 +179,10 @@ const App = (): React.JSX.Element => {
           navigateBack();
           return true; // Prevent default behavior
         case 'genre':
+          // Navigate back to main list
+          navigateToList();
+          return true; // Prevent default behavior
+        case 'settings':
           // Navigate back to main list
           navigateToList();
           return true; // Prevent default behavior
@@ -284,12 +289,21 @@ And the world will be as one
         }
         
         updatedLyrics = allLyrics.map(l => l.id === lyrics.id ? lyrics : l);
+        setAllLyrics(updatedLyrics);
+        await AsyncStorage.setItem('myLyrics', JSON.stringify(updatedLyrics));
+        // After editing, go back to viewer mode
+        setCurrentLyrics(lyrics);
+        setCurrentView('viewer');
+        setEditMode(false);
       } else {
         updatedLyrics = [...allLyrics, lyrics];
+        setAllLyrics(updatedLyrics);
+        await AsyncStorage.setItem('myLyrics', JSON.stringify(updatedLyrics));
+        // After creating new, go to viewer mode of the new song
+        setCurrentLyrics(lyrics);
+        setCurrentView('viewer');
+        setEditMode(false);
       }
-      setAllLyrics(updatedLyrics);
-      await AsyncStorage.setItem('myLyrics', JSON.stringify(updatedLyrics));
-      navigateToList();
     } catch (error) {
       console.error('Error saving lyrics:', error);
       Alert.alert('Error', 'Failed to save lyrics');
@@ -357,6 +371,10 @@ And the world will be as one
 
   const navigateToViewer = (lyrics: Lyrics) => {
     setPreviousView(currentView);
+    // If coming from genre, remember the original view
+    if (currentView === 'genre') {
+      setOriginalView('genre');
+    }
     setCurrentLyrics(lyrics);
     setPosition(0);
     setIsPlaying(false);
@@ -366,6 +384,7 @@ And the world will be as one
   const navigateToList = () => {
     setCurrentView('list');
     setPreviousView(null);
+    setOriginalView(null);
     setCurrentLyrics(null);
     setEditMode(false);
     setSelectedGenre('');
@@ -407,6 +426,12 @@ And the world will be as one
     } else if (currentView === 'editor' && previousView === 'genre') {
       // If we're in editor and came from genre, go back to genre
       setCurrentView('genre');
+    } else if (previousView === 'viewer') {
+      // If we came from viewer, go back to viewer
+      setCurrentView('viewer');
+    } else if (currentView === 'settings') {
+      // If we're in settings, go back to main list (homepage)
+      navigateToList();
     } else {
       // Default fallback - go to main list
       navigateToList();
@@ -427,6 +452,19 @@ And the world will be as one
   const getGenres = () => {
     const genres = [...new Set(allLyrics.map(l => l.genre).filter(genre => genre && typeof genre === 'string' && genre.trim().length > 0))];
     return genres.sort();
+  };
+
+  const getRandomFunnyMessage = () => {
+    const messages = [
+      "Your music library is feeling a bit lonely! Time to add some tunes and make it sing! 🎤",
+      "No songs yet? That's music to my ears... wait, that doesn't make sense! 🎵",
+      "The silence is deafening! Let's add some lyrics to break it! 🎶",
+      "Your playlist is emptier than a karaoke bar at 3 AM! Time to fill it up! 🎤",
+      "Even crickets would be jealous of how quiet it is here! Add some songs! 🦗🎵",
+      "This empty space is giving me stage fright! Help me out with some lyrics! 🎭",
+      "Your music collection is so empty, it's echoing! Let's add some substance! 🏔️🎵"
+    ];
+    return messages[Math.floor(Math.random() * messages.length)];
   };
 
   // Filter genres based on input
@@ -632,18 +670,24 @@ And the world will be as one
           console.log('Music directory ensured');
         } catch (error) {
           console.log('Music directory creation failed:', error);
+          // Don't throw the error, just log it and continue
         }
         
         console.log('Copying file from:', file.uri);
         console.log('Copying file to:', destinationPath);
         
         // Copy the file to the project directory using legacy API for external URIs
-        await copyAsync({
-          from: file.uri,
-          to: destinationPath,
-        });
-        
-        console.log('File copied successfully');
+        try {
+          await copyAsync({
+            from: file.uri,
+            to: destinationPath,
+          });
+          console.log('File copied successfully');
+        } catch (error) {
+          console.error('File copy failed:', error);
+          Alert.alert('Error', 'Failed to copy audio file. Please try again.');
+          return null;
+        }
         
         return { 
           audioUri: destinationPath, 
@@ -669,6 +713,8 @@ And the world will be as one
         return;
       }
 
+      console.log('Attempting to play audio from:', audioSource);
+
       // If we already have a sound instance and it's paused, just resume it
       if (sound && !isPlaying) {
         await sound.playAsync();
@@ -682,18 +728,34 @@ And the world will be as one
         setSound(null);
       }
 
-      // Create new sound instance
+      // Create new sound instance with better error handling
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioSource },
-        { shouldPlay: true },
+        { 
+          shouldPlay: true,
+          isLooping: false,
+          volume: 1.0
+        },
         onPlaybackStatusUpdate
       );
       
       setSound(newSound);
       setIsPlaying(true);
+      console.log('Audio loaded successfully');
     } catch (error) {
       console.error('Error playing audio:', error);
-      Alert.alert('Error', 'Failed to play audio. Please check if the audio file is valid and supported.');
+      console.error('Audio source was:', localPath || audioUri);
+      
+      // More specific error messages
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('not found')) {
+        Alert.alert('Error', 'Audio file not found. The file may have been moved or deleted.');
+      } else if (errorMessage.includes('permission')) {
+        Alert.alert('Error', 'Permission denied. Cannot access the audio file.');
+      } else {
+        Alert.alert('Error', 'Failed to play audio. Please check if the audio file is valid and supported.');
+      }
+      
       setIsPlaying(false);
     }
   };
@@ -826,20 +888,38 @@ And the world will be as one
         style={[styles.lyricsItem, { backgroundColor: currentTheme.cardBackground, borderColor: currentTheme.border }]}
         onPress={() => navigateToViewer(item)}
         onLongPress={() => {
-          Alert.alert(
-            'Delete Lyrics',
-            `Are you sure you want to delete "${item.title || 'Untitled'}"?`,
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Delete', style: 'destructive', onPress: () => deleteLyrics(item.id) },
-            ]
-          );
+          if (item.id === 'default-reference-song' || item.id === 'default-sample-song') {
+            Alert.alert(
+              'Default Song',
+              'This is a default song that helps you understand how the app works. You can edit it but not delete it.',
+              [
+                { text: 'OK', style: 'default' },
+                { text: 'Edit', style: 'default', onPress: () => navigateToEditor(item) },
+              ]
+            );
+          } else {
+            Alert.alert(
+              'Delete Lyrics',
+              `Are you sure you want to delete "${item.title || 'Untitled'}"?`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: () => deleteLyrics(item.id) },
+              ]
+            );
+          }
         }}
       >
         <View style={styles.lyricsItemHeader}>
-          <Text style={[styles.lyricsTitle, { color: currentTheme.text }]} numberOfLines={2}>
-            {item.title || 'Untitled'}
-          </Text>
+          <View style={styles.titleContainer}>
+            <Text style={[styles.lyricsTitle, { color: currentTheme.text }]} numberOfLines={2}>
+              {item.title || 'Untitled'}
+            </Text>
+            {(item.id === 'default-reference-song' || item.id === 'default-sample-song') && (
+              <View style={[styles.referenceBadge, { backgroundColor: currentTheme.accent + '20', borderColor: currentTheme.accent }]}>
+                <Text style={[styles.referenceBadgeText, { color: currentTheme.accent }]}>DEF</Text>
+              </View>
+            )}
+          </View>
           {item.audioUri && <Text style={[styles.audioIndicator, { color: currentTheme.accent }]}>🎵</Text>}
         </View>
         <Text style={[styles.lyricsPreview, { color: currentTheme.textSecondary }]} numberOfLines={3}>
@@ -884,11 +964,21 @@ And the world will be as one
   };
 
   const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <Text style={styles.emptyIcon}>🎵</Text>
-      <Text style={[styles.emptyText, { color: currentTheme.textSecondary }]}>
-        {searchTerm ? 'No lyrics found matching your search.' : 'No lyrics found. Create your first lyrics!'}
-      </Text>
+    <View style={[styles.emptyState, { backgroundColor: currentTheme.background }]}>
+      <View style={[styles.emptyStateContainer, { backgroundColor: currentTheme.surface }]}>
+        <View style={[styles.emptyIconContainer, { backgroundColor: currentTheme.primary + '15' }]}>
+          <Text style={[styles.emptyIcon, { color: currentTheme.primary }]}>🎵</Text>
+        </View>
+        <Text style={[styles.emptyTitle, { color: currentTheme.text }]}>
+          {searchTerm ? 'No Results Found' : '🎵 Waiting for songs to be added... 🎵'}
+        </Text>
+        <Text style={[styles.emptySubtitle, { color: currentTheme.textSecondary }]}>
+          {searchTerm 
+            ? 'Try adjusting your search terms or browse all lyrics' 
+            : getRandomFunnyMessage()
+          }
+        </Text>
+      </View>
     </View>
   );
 
@@ -916,7 +1006,7 @@ And the world will be as one
   const renderListView = () => {
     const header = (
       <>
-        <View key="header" style={[styles.header, { backgroundColor: currentTheme.headerBackground, borderBottomColor: currentTheme.border }]}>
+        <View key="header" style={[styles.header, { backgroundColor: currentTheme.headerBackground, borderBottomColor: currentTheme.border }, allLyrics.length === 0 && styles.headerSpaced]}>
           <Text style={[styles.headerTitle, { color: currentTheme.text, fontSize: 20, fontWeight: '700' }]}>LyricsStore</Text>
             <View style={styles.headerButtons}>
               <TouchableOpacity style={[styles.settingsButton, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]} onPress={navigateToSettings}>
@@ -928,7 +1018,7 @@ And the world will be as one
               </TouchableOpacity>
             </View>
         </View>
-        <View key="search" style={[styles.searchContainer, { backgroundColor: currentTheme.searchBackground, borderBottomColor: currentTheme.border }]}>
+        <View key="search" style={[styles.searchContainer, { backgroundColor: currentTheme.searchBackground, borderBottomColor: currentTheme.border }, allLyrics.length === 0 && styles.searchContainerSpaced]}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <TextInput
               style={[
@@ -1312,92 +1402,61 @@ And the world will be as one
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={[styles.content, { backgroundColor: currentTheme.background }]}>
-          <Text style={[styles.lyricsText, { color: currentTheme.text }]}>{currentLyrics.content}</Text>
-
-          {currentLyrics.audioUri && (
-            <View style={[styles.mediaSection, { backgroundColor: currentTheme.cardBackground, borderColor: currentTheme.border }]}>
-              <Text style={[styles.mediaTitle, { color: currentTheme.text }]}>Audio Player</Text>
-              <View style={[styles.audioPlayerContainer, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}>
-                <Text style={[styles.audioFileName, { color: currentTheme.textSecondary }]}>{currentLyrics.audioFileName}</Text>
+        {currentLyrics.audioUri && (
+          <View style={[styles.mediaSection, { backgroundColor: currentTheme.cardBackground, borderColor: currentTheme.border }]}>
+            {/* <Text style={[styles.mediaTitle, { color: currentTheme.text }]}>Audio Player</Text> */}
+            <View style={[styles.audioPlayerContainer, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}>
+              <Text style={[styles.audioFileName, { color: currentTheme.textSecondary }]}>{currentLyrics.audioFileName}</Text>
+              <View
+                style={styles.progressContainer}
+                onLayout={(e) => setViewerProgressWidth(e.nativeEvent.layout.width)}
+              >
                 <View
-                  style={styles.progressContainer}
-                  onLayout={(e) => setViewerProgressWidth(e.nativeEvent.layout.width)}
+                  style={[styles.progressBar, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}
+                  onStartShouldSetResponder={() => true}
+                  onResponderGrant={async (e) => {
+                    setIsDragging(true);
+                    setWasPlayingBeforeDrag(isPlaying);
+                    const x = e.nativeEvent.locationX;
+                    if (isPlaying) {
+                      await pauseAudio();
+                    }
+                    handleSeekByX(x, viewerProgressWidth);
+                  }}
+                  onResponderMove={(e) => handleSeekByX(e.nativeEvent.locationX, viewerProgressWidth)}
+                  onResponderRelease={async () => {
+                    setIsDragging(false);
+                    if (wasPlayingBeforeDrag) {
+                      await resumeAudio();
+                    }
+                  }}
+                  onResponderTerminate={async () => {
+                    setIsDragging(false);
+                    if (wasPlayingBeforeDrag) {
+                      await resumeAudio();
+                    }
+                  }}
                 >
+                  <View 
+                    style={[
+                      styles.progressFill, 
+                      { width: duration > 0 ? `${(position / duration) * 100}%` : '0%', backgroundColor: currentTheme.accent }
+                    ]} 
+                  />
                   <View
-                    style={[styles.progressBar, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}
-                    onStartShouldSetResponder={() => true}
-                    onResponderGrant={async (e) => {
-                      setIsDragging(true);
-                      setWasPlayingBeforeDrag(isPlaying);
-                      const x = e.nativeEvent.locationX;
-                      if (isPlaying) {
-                        await pauseAudio();
-                      }
-                      handleSeekByX(x, viewerProgressWidth);
-                    }}
-                    onResponderMove={(e) => handleSeekByX(e.nativeEvent.locationX, viewerProgressWidth)}
-                    onResponderRelease={async () => {
-                      setIsDragging(false);
-                      if (wasPlayingBeforeDrag) {
-                        await resumeAudio();
-                      }
-                    }}
-                    onResponderTerminate={async () => {
-                      setIsDragging(false);
-                      if (wasPlayingBeforeDrag) {
-                        await resumeAudio();
-                      }
-                    }}
-                  >
-                    <View 
-                      style={[
-                        styles.progressFill, 
-                        { width: duration > 0 ? `${(position / duration) * 100}%` : '0%', backgroundColor: currentTheme.accent }
-                      ]} 
-                    />
-                    <View
-                      style={[
-                        styles.progressHandle,
-                        {
-                          left: Math.max(0, Math.min(viewerProgressWidth - 12, getHandleLeft(viewerProgressWidth) - 6)),
-                          transform: [{ scale: isDragging ? 1.2 : 1 }],
-                          backgroundColor: currentTheme.accent,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <View style={styles.timeContainer}>
-                    <Text style={[styles.timeText, { color: currentTheme.textSecondary }]}>{formatTime(position)}</Text>
-                    <Text style={[styles.timeText, { color: currentTheme.textSecondary }]}>{formatTime(duration)}</Text>
-                  </View>
+                    style={[
+                      styles.progressHandle,
+                      {
+                        left: Math.max(0, Math.min(viewerProgressWidth - 12, getHandleLeft(viewerProgressWidth) - 6)),
+                        transform: [{ scale: isDragging ? 1.2 : 1 }],
+                        backgroundColor: currentTheme.accent,
+                      },
+                    ]}
+                  />
                 </View>
-                <View style={styles.audioControls}>
-                  <TouchableOpacity style={[styles.skipButton, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]} onPress={skipBackward}>
-                    <Text style={[styles.skipButtonText, { color: currentTheme.accent }]}>⏪</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={[styles.audioButton, { backgroundColor: currentTheme.buttonBackground }]} 
-                    onPress={() => {
-                      if (isPlaying) {
-                        pauseAudio();
-                      } else if (sound) {
-                        resumeAudio();
-                      } else if (currentLyrics?.audioUri) {
-                        playAudio(currentLyrics.audioUri);
-                      }
-                    }}
-                  >
-                    <Text style={[styles.audioButtonText, { color: currentTheme.buttonText }]}>
-                      {isPlaying ? '⏸️' : '▶️'}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.audioButton, { backgroundColor: currentTheme.buttonBackground }]} onPress={stopAudio}>
-                    <Text style={[styles.audioButtonText, { color: currentTheme.buttonText }]}>⏹️</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.skipButton, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]} onPress={skipForward}>
-                    <Text style={[styles.skipButtonText, { color: currentTheme.accent }]}>⏩</Text>
-                  </TouchableOpacity>
+                <View style={styles.timeContainer}>
+                  <Text style={[styles.timeText, { color: currentTheme.textSecondary }]}>{formatTime(position)}</Text>
+                  <Text style={[styles.timeText, { color: currentTheme.textSecondary }]}>{formatTime(duration)}</Text>
                 </View>
               </View>
               <View style={styles.audioControls}>
@@ -1475,9 +1534,18 @@ And the world will be as one
         columnWrapperStyle={styles.row}
         contentContainerStyle={getLyricsByGenre(selectedGenre).length === 0 ? styles.emptyContainer : styles.gridContainer}
         ListEmptyComponent={() => (
-          <View style={styles.emptyState}>
-            <Text style={[styles.emptyIcon, { color: currentTheme.accent }]}>🎵</Text>
-            <Text style={[styles.emptyText, { color: currentTheme.textSecondary }]}>No songs in {selectedGenre} genre yet.</Text>
+          <View style={[styles.emptyState, { backgroundColor: currentTheme.background }]}>
+            <View style={[styles.emptyStateContainer, { backgroundColor: currentTheme.surface }]}>
+              <View style={[styles.emptyIconContainer, { backgroundColor: currentTheme.primary + '15' }]}>
+                <Text style={[styles.emptyIcon, { color: currentTheme.primary }]}>🎵</Text>
+              </View>
+              <Text style={[styles.emptyTitle, { color: currentTheme.text }]}>
+                🎭 No {selectedGenre} Songs Yet
+              </Text>
+              <Text style={[styles.emptySubtitle, { color: currentTheme.textSecondary }]}>
+                The {selectedGenre} section is taking a coffee break! ☕ Add some songs to wake it up! 🎶
+              </Text>
+            </View>
           </View>
         )}
       />
@@ -1717,6 +1785,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 8,
   },
+  titleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  referenceBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  referenceBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
   lyricsTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -1742,20 +1826,95 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
+    paddingHorizontal: 24, // Match header horizontal padding
+    paddingVertical: 20,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    borderRadius: 20,
+    marginHorizontal: 0, // Remove horizontal margin to use parent padding
+    maxWidth: 320,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  emptyIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
   },
   emptyIcon: {
-    fontSize: 64,
-    marginBottom: 20,
-    color: '#8b5cf6',
+    fontSize: 48,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 32,
+  },
+  emptyActions: {
+    width: '100%',
+  },
+  emptyActionButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyActionText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   emptyText: {
     fontSize: 18,
     color: '#666666',
     textAlign: 'center',
     lineHeight: 26,
+  },
+  headerExpanded: {
+    paddingVertical: 32,
+    paddingTop: Platform.OS === 'ios' ? 80 : 40,
+  },
+  searchContainerExpanded: {
+    padding: 24,
+  },
+  searchInputExpanded: {
+    padding: 16,
+    fontSize: 18,
+  },
+  newButtonExpanded: {
+    paddingHorizontal: 28,
+    paddingVertical: 16,
+  },
+  newButtonTextExpanded: {
+    fontSize: 18,
+  },
+  headerSpaced: {
+    paddingVertical: 40, // Increased vertical padding for empty state
+    paddingTop: Platform.OS === 'ios' ? 80 : 40, // More top padding for iOS
+  },
+  searchContainerSpaced: {
+    paddingVertical: 24, // Increased vertical padding for empty state
   },
   backButton: {
     width: 48,
@@ -1847,6 +2006,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 20,
     marginBottom: 20,
+    width: '100%',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -1855,6 +2015,7 @@ const styles = StyleSheet.create({
   },
   audioPlayerContainer: {
     alignItems: 'center',
+    width: '100%',
   },
   audioFileName: {
     fontSize: 16,
@@ -1907,6 +2068,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 16,
+    width: '100%',
+    paddingHorizontal: 20,
+    marginTop: 16,
   },
   audioButton: {
     backgroundColor: '#8b5cf6',
