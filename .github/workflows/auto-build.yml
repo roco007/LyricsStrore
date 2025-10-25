@@ -58,7 +58,7 @@ jobs:
             **Branch:** \`${context.ref.replace('refs/heads/', '')}\`  
             **Commit:** \`${context.sha.substring(0, 7)}\`
             
-            Check the [EAS Build Dashboard](https://expo.dev/accounts/rc_007/projects/MyLyricsApp/builds) for download links.`;
+            Check the [EAS Build Dashboard](https://expo.dev/accounts/rc_007/projects/LyricsStore/builds) for download links.`;
             
             if (botComment) {
               await github.rest.issues.updateComment({

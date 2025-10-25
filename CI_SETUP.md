@@ -71,7 +71,7 @@ run: eas build -p android --profile production --non-interactive
 ## 🔍 Monitoring Builds
 
 - **GitHub Actions**: Check the Actions tab in your repository
-- **EAS Dashboard**: Visit https://expo.dev/accounts/rc_007/projects/MyLyricsApp/builds
+- **EAS Dashboard**: Visit https://expo.dev/accounts/rc_007/projects/LyricsStore/builds
 - **Build Artifacts**: Download APK files from the Actions tab after successful builds
 
 ## 🛠️ Troubleshooting

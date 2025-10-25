@@ -645,24 +645,79 @@ And the world will be as one
     return { lyrics: matchingLyrics, genres: matchingGenres };
   };
 
+  // Helper function to check if file is video
+  const isVideoFile = (mimeType: string) => {
+    return mimeType && mimeType.startsWith('video/');
+  };
+
+  // Helper function to extract audio from video (simplified approach)
+  const extractAudioFromVideo = async (videoUri: string, outputPath: string) => {
+    try {
+      // For now, we'll use a simplified approach
+      // In a production app, you'd want to use react-native-ffmpeg or similar
+      console.log('Video file detected, attempting to extract audio...');
+      
+      // Since we can't easily extract audio in Expo without additional libraries,
+      // we'll show a helpful message to the user
+      Alert.alert(
+        'Video File Detected',
+        'Video files are supported, but only the audio track will be used. The video portion will be ignored. For best results, consider using audio-only files (MP3, M4A, WAV).',
+        [
+          {
+            text: 'Continue',
+            onPress: () => {
+              // Copy the video file as-is, but rename it as audio
+              // The audio player will attempt to play the audio track
+              return true;
+            }
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          }
+        ]
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('Error extracting audio from video:', error);
+      return false;
+    }
+  };
+
   // Pick and copy audio file to project directory
   const pickAndCopyAudio = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
+          // Audio formats
           'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/x-m4a',
           'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/ogg', 'audio/vorbis',
           'audio/flac', 'audio/3gp', 'audio/amr', 'audio/aiff', 'audio/caf',
-          'audio/x-aiff', 'audio/x-caf'
+          'audio/x-aiff', 'audio/x-caf',
+          // Video formats (will extract audio only)
+          'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi',
+          'video/x-ms-wmv', 'video/webm', 'video/3gpp', 'video/x-flv',
+          'video/x-matroska', 'video/mov', 'video/m4v'
         ],
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
         
+        // Check if it's a video file
+        const isVideo = isVideoFile(file.mimeType || '');
+        
         // Create a unique filename to avoid conflicts
         const timestamp = Date.now();
-        const fileExtension = file.name.split('.').pop() || 'mp3';
+        let fileExtension = file.name.split('.').pop() || 'mp3';
+        
+        // If it's a video file, change extension to audio format
+        if (isVideo) {
+          fileExtension = 'mp4'; // Keep as mp4 but treat as audio
+          console.log('Video file detected:', file.name, 'MIME type:', file.mimeType);
+        }
+        
         const uniqueFileName = `audio_${timestamp}.${fileExtension}`;
         
         // Define the music directory path
@@ -694,9 +749,18 @@ And the world will be as one
           return null;
         }
         
+        // If it's a video file, show user notification
+        if (isVideo) {
+          Alert.alert(
+            'Video File Processed',
+            'Video file uploaded successfully! Only the audio track will be used for playback. The video portion will be ignored.',
+            [{ text: 'OK' }]
+          );
+        }
+        
         return { 
           audioUri: destinationPath, 
-          audioFileName: file.name,
+          audioFileName: isVideo ? `${file.name} (audio only)` : file.name,
           localPath: destinationPath
         };
       }
@@ -719,6 +783,11 @@ And the world will be as one
       }
 
       console.log('Attempting to play audio from:', audioSource);
+      
+      // Check if this is a video file and warn user
+      if (audioSource.includes('.mp4') && !audioSource.includes('audio_')) {
+        console.log('Video file detected for audio playback');
+      }
 
       // If we already have a sound instance and it's paused, just resume it
       if (sound && !isPlaying) {

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "MyLyricsApp",
-    "slug": "MyLyricsApp",
+    "name": "LyricsStore",
+    "slug": "LyricsStore",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,13 +14,13 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rc007.mylyricsapp",
+      "bundleIdentifier": "com.rc007.LyricsStore",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.rc007.mylyricsapp",
+      "package": "com.rc007.LyricsStore",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
