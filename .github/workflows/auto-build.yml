@@ -3,7 +3,6 @@ name: Auto Build on Push
 on:
   push:
     branches:
-      - rc_007
       - main
       - prod
 
