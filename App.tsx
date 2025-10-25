@@ -18,7 +18,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import { Paths, Directory, File } from 'expo-file-system';
+import { copyAsync, makeDirectoryAsync, getInfoAsync, deleteAsync } from 'expo-file-system/legacy';
 
 interface Lyrics {
   id: string;
@@ -26,7 +27,9 @@ interface Lyrics {
   content: string;
   audioUri?: string;
   audioFileName?: string;
+  localPath?: string;
   genre: string;
+  scale: string;
   createdAt: string;
 }
 
@@ -103,7 +106,9 @@ const App = (): React.JSX.Element => {
   const [theme, setTheme] = useState<ThemeType>('light');
   const [showThemeDropdown, setShowThemeDropdown] = useState(false);
   const [showGenreDropdown, setShowGenreDropdown] = useState(false);
+  const [showScaleDropdown, setShowScaleDropdown] = useState(false);
   const [filteredGenres, setFilteredGenres] = useState<string[]>([]);
+  const [filteredScales, setFilteredScales] = useState<string[]>([]);
 
   // Get current theme colors based on selected theme
   const getCurrentTheme = (): ThemeColors => {
@@ -121,7 +126,9 @@ const App = (): React.JSX.Element => {
   const [editorContent, setEditorContent] = useState('');
   const [editorAudioUri, setEditorAudioUri] = useState('');
   const [editorAudioFileName, setEditorAudioFileName] = useState('');
+  const [editorLocalPath, setEditorLocalPath] = useState('');
   const [editorGenre, setEditorGenre] = useState('');
+  const [editorScale, setEditorScale] = useState('');
   // Progress bar widths for seeking
   const [editorProgressWidth, setEditorProgressWidth] = useState(0);
   const [viewerProgressWidth, setViewerProgressWidth] = useState(0);
@@ -146,9 +153,7 @@ const App = (): React.JSX.Element => {
     const subscription = AppState.addEventListener('change', handleAppStateChange);
     
     return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
+      cleanupAudio();
       subscription?.remove();
     };
   }, []);
@@ -174,6 +179,10 @@ const App = (): React.JSX.Element => {
           navigateBack();
           return true; // Prevent default behavior
         case 'genre':
+          // Navigate back to main list
+          navigateToList();
+          return true; // Prevent default behavior
+        case 'settings':
           // Navigate back to main list
           navigateToList();
           return true; // Prevent default behavior
@@ -211,6 +220,7 @@ Features:
 
 Start building your music library today! 🎶`,
             genre: 'Reference',
+            scale: 'C',
             createdAt: new Date().toISOString(),
           },
           {
@@ -238,6 +248,7 @@ And the world will be as one
 
 [This is a sample song to show you how lyrics look in the app]`,
             genre: 'Pop',
+            scale: 'C Major',
             createdAt: new Date().toISOString(),
           }
         ];
@@ -252,10 +263,31 @@ And the world will be as one
     }
   };
 
+  // Helper function to delete audio file
+  const deleteAudioFile = async (localPath: string) => {
+    try {
+      if (localPath) {
+        await deleteAsync(localPath);
+        console.log('Audio file deleted:', localPath);
+      }
+    } catch (error) {
+      // File might not exist, that's okay
+      console.log('File deletion failed (might not exist):', error);
+    }
+  };
+
   const saveLyrics = async (lyrics: Lyrics) => {
     try {
       let updatedLyrics;
       if (editMode) {
+        // Find the existing lyrics to check for old audio file
+        const existingLyrics = allLyrics.find(l => l.id === lyrics.id);
+        
+        // If there's an old audio file and it's different from the new one, delete the old file
+        if (existingLyrics?.localPath && existingLyrics.localPath !== lyrics.localPath) {
+          await deleteAudioFile(existingLyrics.localPath);
+        }
+        
         updatedLyrics = allLyrics.map(l => l.id === lyrics.id ? lyrics : l);
         setAllLyrics(updatedLyrics);
         await AsyncStorage.setItem('myLyrics', JSON.stringify(updatedLyrics));
@@ -290,6 +322,12 @@ And the world will be as one
         return;
       }
       
+      // Find the lyrics to delete and remove associated audio file
+      const lyricsToDelete = allLyrics.find(l => l.id === id);
+      if (lyricsToDelete?.localPath) {
+        await deleteAudioFile(lyricsToDelete.localPath);
+      }
+      
       const updatedLyrics = allLyrics.filter(l => l.id !== id);
       setAllLyrics(updatedLyrics);
       await AsyncStorage.setItem('myLyrics', JSON.stringify(updatedLyrics));
@@ -307,13 +345,16 @@ And the world will be as one
       setEditorContent(lyrics.content || '');
       setEditorAudioUri(lyrics.audioUri || '');
       setEditorAudioFileName(lyrics.audioFileName || '');
+      setEditorLocalPath(lyrics.localPath || '');
       setEditorGenre(lyrics.genre || '');
+      setEditorScale(lyrics.scale || '');
     } else {
       setCurrentLyrics({
         id: Date.now().toString(),
         title: '',
         content: '',
         genre: 'General',
+        scale: 'C',
         createdAt: new Date().toISOString(),
       });
       setEditMode(false);
@@ -321,7 +362,9 @@ And the world will be as one
       setEditorContent('');
       setEditorAudioUri('');
       setEditorAudioFileName('');
+      setEditorLocalPath('');
       setEditorGenre('General');
+      setEditorScale('C');
     }
     setCurrentView('editor');
   };
@@ -345,10 +388,21 @@ And the world will be as one
     setCurrentLyrics(null);
     setEditMode(false);
     setSelectedGenre('');
-    if (sound) {
-      sound.unloadAsync();
-      setSound(null);
-      setIsPlaying(false);
+    // Clean up audio
+    cleanupAudio();
+  };
+
+  const cleanupAudio = async () => {
+    try {
+      if (sound) {
+        await sound.unloadAsync();
+        setSound(null);
+        setIsPlaying(false);
+        setPosition(0);
+        setDuration(0);
+      }
+    } catch (error) {
+      console.error('Error cleaning up audio:', error);
     }
   };
 
@@ -357,14 +411,29 @@ And the world will be as one
       // If we're in viewer and originally came from genre, go back to genre
       setCurrentView('genre');
       setOriginalView(null); // Clear original view after using it
-    } else if (previousView === 'genre') {
-      // If we came from genre view, go back to that specific genre
+    } else if (currentView === 'viewer' && previousView === 'genre') {
+      // If we're in viewer and came from genre view, go back to that specific genre
+      setCurrentView('genre');
+    } else if (currentView === 'viewer' && previousView === 'list') {
+      // If we're in viewer and came from list, go back to list
+      navigateToList();
+    } else if (currentView === 'editor' && previousView === 'viewer') {
+      // If we're in editor and came from viewer, go back to viewer
+      setCurrentView('viewer');
+    } else if (currentView === 'editor' && previousView === 'list') {
+      // If we're in editor and came from list, go back to list
+      navigateToList();
+    } else if (currentView === 'editor' && previousView === 'genre') {
+      // If we're in editor and came from genre, go back to genre
       setCurrentView('genre');
     } else if (previousView === 'viewer') {
       // If we came from viewer, go back to viewer
       setCurrentView('viewer');
+    } else if (currentView === 'settings') {
+      // If we're in settings, go back to main list (homepage)
+      navigateToList();
     } else {
-      // Otherwise go to main list
+      // Default fallback - go to main list
       navigateToList();
     }
   };
@@ -433,6 +502,52 @@ And the world will be as one
     }
   };
 
+  // Get available musical keys
+  const getScales = () => {
+    const keys = [
+      'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B',
+      'Cm', 'C#m', 'Dm', 'D#m', 'Em', 'Fm', 
+      'F#m', 'Gm', 'G#m', 'Am', 'A#m', 'Bm',
+      'General', 'Other'
+    ];
+    return keys.sort();
+  };
+
+  // Filter scales based on input
+  const filterScales = (input: string) => {
+    if (!input.trim()) {
+      setFilteredScales(getScales());
+      return;
+    }
+    
+    const filtered = getScales().filter(scale =>
+      scale.toLowerCase().includes(input.toLowerCase())
+    );
+    setFilteredScales(filtered);
+  };
+
+  // Handle scale input change
+  const handleScaleInputChange = (text: string) => {
+    setEditorScale(text);
+    filterScales(text);
+    setShowScaleDropdown(true);
+  };
+
+  // Select a scale from dropdown
+  const selectScale = (scale: string) => {
+    setEditorScale(scale);
+    setShowScaleDropdown(false);
+    setFilteredScales([]);
+  };
+
+  // Create new scale
+  const createNewScale = () => {
+    if (editorScale.trim()) {
+      setShowScaleDropdown(false);
+      setFilteredScales([]);
+    }
+  };
+
   const getGenreColor = (genre: string) => {
     const colors = [
       '#ff6b6b', // Red
@@ -455,27 +570,48 @@ And the world will be as one
 
   const getGenreIcon = (genre: string) => {
     const icons = {
-      'Rock': '🎸',
-      'Pop': '🎤',
-      'Hip Hop': '🎧',
-      'Jazz': '🎷',
-      'Country': '🤠',
-      'Electronic': '🎛️',
-      'Classical': '🎼',
-      'R&B': '🎵',
-      'Blues': '🎶',
-      'Folk': '🪕',
-      'Garba': '💃',
-      'Bollywood': '🎬',
-      'Bhangra': '💃',
-      'Sufi': '🎵',
-      'Ghazal': '🎵',
-      'Qawwali': '🎵',
+      'rock': '🎸',
+      'pop': '🎤',
+      'hip hop': '🎧',
+      'jazz': '🎷',
+      'country': '🤠',
+      'electronic': '🎛️',
+      'classical': '🎼',
+      'r&b': '🎵',
+      'blues': '🎶',
+      'folk': '🪕',
+      'garba': '💃',
+      'bollywood': '🎬',
+      'bhangra': '💃',
+      'sufi': '🎵',
+      'ghazal': '🎵',
+      'qawwali': '🎵',
+      'reference': '📚',
+      'general': '🎵',
+      'other': '🎵',
+      'rap': '🎤',
+      'reggae': '🌴',
+      'metal': '🤘',
+      'punk': '⚡',
+      'indie': '🎨',
+      'alternative': '🎭',
+      'funk': '🕺',
+      'soul': '💫',
+      'gospel': '⛪',
+      'ambient': '🌌',
+      'techno': '🔊',
+      'house': '🏠',
+      'trance': '🌀',
+      'dubstep': '💥',
+      'trap': '🕳️',
+      'lo-fi': '📻',
     };
     if (!genre || typeof genre !== 'string') {
       return '🎵'; // Default icon if genre is invalid
     }
-    return icons[genre as keyof typeof icons] || '🎵';
+    // Convert to lowercase and trim whitespace for case-insensitive matching
+    const normalizedGenre = genre.toLowerCase().trim();
+    return icons[normalizedGenre as keyof typeof icons] || '🎵';
   };
 
   const getLyricsByGenre = (genre: string) => {
@@ -509,7 +645,7 @@ And the world will be as one
     return { lyrics: matchingLyrics, genres: matchingGenres };
   };
 
-  // Pick and copy audio file to app cache
+  // Pick and copy audio file to project directory
   const pickAndCopyAudio = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -518,18 +654,68 @@ And the world will be as one
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
-        return { audioUri: file.uri, audioFileName: file.name };
+        
+        // Create a unique filename to avoid conflicts
+        const timestamp = Date.now();
+        const fileExtension = file.name.split('.').pop() || 'mp3';
+        const uniqueFileName = `audio_${timestamp}.${fileExtension}`;
+        
+        // Define the music directory path
+        const musicDirPath = `${Paths.document.uri}music/`;
+        const destinationPath = `${musicDirPath}${uniqueFileName}`;
+        
+        // Ensure the music directory exists using legacy API
+        try {
+          await makeDirectoryAsync(musicDirPath, { intermediates: true });
+          console.log('Music directory ensured');
+        } catch (error) {
+          console.log('Music directory creation failed:', error);
+          // Don't throw the error, just log it and continue
+        }
+        
+        console.log('Copying file from:', file.uri);
+        console.log('Copying file to:', destinationPath);
+        
+        // Copy the file to the project directory using legacy API for external URIs
+        try {
+          await copyAsync({
+            from: file.uri,
+            to: destinationPath,
+          });
+          console.log('File copied successfully');
+        } catch (error) {
+          console.error('File copy failed:', error);
+          Alert.alert('Error', 'Failed to copy audio file. Please try again.');
+          return null;
+        }
+        
+        return { 
+          audioUri: destinationPath, 
+          audioFileName: file.name,
+          localPath: destinationPath
+        };
       }
     } catch (error) {
-      console.error('Error picking audio:', error);
+      console.error('Error picking and copying audio:', error);
       Alert.alert('Error', 'Failed to upload audio file');
     }
     return null;
   };
 
-  const playAudio = async (audioUri: string) => {
+  const playAudio = async (audioUri: string, localPath?: string) => {
     try {
-      // If we already have a sound instance for this URI, just resume it
+      // Use localPath if available, otherwise fall back to audioUri
+      const audioSource = localPath || audioUri;
+      
+      // Validate audio source
+      if (!audioSource || audioSource.trim() === '') {
+        Alert.alert('Error', 'No audio file selected');
+        return;
+      }
+
+      console.log('Attempting to play audio from:', audioSource);
+
+      // If we already have a sound instance and it's paused, just resume it
       if (sound && !isPlaying) {
         await sound.playAsync();
         setIsPlaying(true);
@@ -539,39 +725,74 @@ And the world will be as one
       // If we have a different sound instance, unload it first
       if (sound) {
         await sound.unloadAsync();
+        setSound(null);
       }
 
+      // Create new sound instance with better error handling
       const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: audioUri },
-        { shouldPlay: true },
+        { uri: audioSource },
+        { 
+          shouldPlay: true,
+          isLooping: false,
+          volume: 1.0
+        },
         onPlaybackStatusUpdate
       );
       
       setSound(newSound);
       setIsPlaying(true);
+      console.log('Audio loaded successfully');
     } catch (error) {
       console.error('Error playing audio:', error);
-      Alert.alert('Error', 'Failed to play audio');
+      console.error('Audio source was:', localPath || audioUri);
+      
+      // More specific error messages
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('not found')) {
+        Alert.alert('Error', 'Audio file not found. The file may have been moved or deleted.');
+      } else if (errorMessage.includes('permission')) {
+        Alert.alert('Error', 'Permission denied. Cannot access the audio file.');
+      } else {
+        Alert.alert('Error', 'Failed to play audio. Please check if the audio file is valid and supported.');
+      }
+      
+      setIsPlaying(false);
     }
   };
 
   const pauseAudio = async () => {
-    if (sound) {
-      await sound.pauseAsync();
+    try {
+      if (sound) {
+        await sound.pauseAsync();
+        setIsPlaying(false);
+      }
+    } catch (error) {
+      console.error('Error pausing audio:', error);
       setIsPlaying(false);
     }
   };
 
   const resumeAudio = async () => {
-    if (sound) {
-      await sound.playAsync();
-      setIsPlaying(true);
+    try {
+      if (sound) {
+        await sound.playAsync();
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      console.error('Error resuming audio:', error);
+      setIsPlaying(false);
     }
   };
 
   const stopAudio = async () => {
-    if (sound) {
-      await sound.stopAsync();
+    try {
+      if (sound) {
+        await sound.stopAsync();
+        setIsPlaying(false);
+        setPosition(0);
+      }
+    } catch (error) {
+      console.error('Error stopping audio:', error);
       setIsPlaying(false);
       setPosition(0);
     }
@@ -581,18 +802,34 @@ And the world will be as one
     if (!sound || !duration) return;
     const newPosition = Math.max(0, position - 10000); // 10 seconds back
     try {
-      await sound.setPositionAsync(newPosition);
-      setPosition(newPosition);
-    } catch (e) {}
+      // Check if sound is loaded before trying to set position
+      const status = await sound.getStatusAsync();
+      if (status.isLoaded) {
+        await sound.setPositionAsync(newPosition);
+        setPosition(newPosition);
+      } else {
+        console.log('Sound is not loaded yet, cannot skip backward');
+      }
+    } catch (error) {
+      console.error('Error skipping backward:', error);
+    }
   };
 
   const skipForward = async () => {
     if (!sound || !duration) return;
     const newPosition = Math.min(duration, position + 10000); // 10 seconds forward
     try {
-      await sound.setPositionAsync(newPosition);
-      setPosition(newPosition);
-    } catch (e) {}
+      // Check if sound is loaded before trying to set position
+      const status = await sound.getStatusAsync();
+      if (status.isLoaded) {
+        await sound.setPositionAsync(newPosition);
+        setPosition(newPosition);
+      } else {
+        console.log('Sound is not loaded yet, cannot skip forward');
+      }
+    } catch (error) {
+      console.error('Error skipping forward:', error);
+    }
   };
 
   const onPlaybackStatusUpdate = (status: any) => {
@@ -611,9 +848,17 @@ And the world will be as one
     const clamped = Math.max(0, Math.min(1, ratio));
     const target = Math.floor(duration * clamped);
     try {
-      await sound.setPositionAsync(target);
-      setPosition(target);
-    } catch (e) {}
+      // Check if sound is loaded before trying to set position
+      const status = await sound.getStatusAsync();
+      if (status.isLoaded) {
+        await sound.setPositionAsync(target);
+        setPosition(target);
+      } else {
+        console.log('Sound is not loaded yet, cannot seek');
+      }
+    } catch (error) {
+      console.error('Error seeking audio:', error);
+    }
   };
 
   const handleSeekByX = (x: number, width: number) => {
@@ -846,7 +1091,9 @@ And the world will be as one
         content: editorContent,
         audioUri: editorAudioUri,
         audioFileName: editorAudioFileName,
+        localPath: editorLocalPath,
         genre: editorGenre,
+        scale: editorScale,
       };
 
       saveLyrics(updatedLyrics);
@@ -857,12 +1104,18 @@ And the world will be as one
       if (result) {
         setEditorAudioUri(result.audioUri);
         setEditorAudioFileName(result.audioFileName);
+        setEditorLocalPath(result.localPath);
       }
     };
 
-    const handleRemoveAudio = () => {
+    const handleRemoveAudio = async () => {
+      // Delete the audio file if it exists
+      if (editorLocalPath) {
+        await deleteAudioFile(editorLocalPath);
+      }
       setEditorAudioUri('');
       setEditorAudioFileName('');
+      setEditorLocalPath('');
     };
 
     return (
@@ -885,69 +1138,136 @@ And the world will be as one
 
         <ScrollView 
           style={[styles.content, { backgroundColor: currentTheme.background }]}
-          scrollEnabled={!showGenreDropdown}
+          scrollEnabled={!showGenreDropdown && !showScaleDropdown}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.genreSection}>
-            <Text style={[styles.genreLabel, { color: currentTheme.text }]}>Genre</Text>
-            <View style={styles.genreInputContainer}>
-              <TextInput
-                style={[styles.genreInput, { backgroundColor: currentTheme.inputBackground, borderColor: currentTheme.border, color: currentTheme.text }]}
-                placeholder="Enter genre (e.g., Rock, Pop, Jazz)"
-                placeholderTextColor={currentTheme.textSecondary}
-                value={editorGenre}
-                onChangeText={handleGenreInputChange}
-                onFocus={() => {
-                  setShowGenreDropdown(true);
-                  filterGenres(editorGenre);
-                }}
-                onBlur={() => {
-                  // Delay hiding to allow selection
-                  setTimeout(() => setShowGenreDropdown(false), 200);
-                }}
-              />
-              {showGenreDropdown && (
-                <View style={[styles.genreDropdown, { backgroundColor: currentTheme.cardBackground, borderColor: currentTheme.border }]}>
-                  <ScrollView 
-                    style={styles.genreDropdownScroll}
-                    contentContainerStyle={styles.genreDropdownContent}
-                    showsVerticalScrollIndicator={true}
-                    keyboardShouldPersistTaps="handled"
-                    bounces={false}
-                    scrollEnabled={true}
-                    nestedScrollEnabled={true}
-                  >
-                    {filteredGenres.length > 0 ? (
-                      filteredGenres.map((genre, index) => (
+          <View style={styles.genreKeyRow}>
+            <View style={styles.genreSection}>
+              <Text style={[styles.genreLabel, { color: currentTheme.text }]}>Genre</Text>
+              <View style={styles.genreInputContainer}>
+                <TextInput
+                  style={[styles.genreInput, { backgroundColor: currentTheme.inputBackground, borderColor: currentTheme.border, color: currentTheme.text }]}
+                  placeholder="Enter genre (e.g., Rock, Pop, Jazz)"
+                  placeholderTextColor={currentTheme.textSecondary}
+                  value={editorGenre}
+                  onChangeText={handleGenreInputChange}
+                  onFocus={() => {
+                    setShowGenreDropdown(true);
+                    setShowScaleDropdown(false); // Hide scale dropdown when genre is focused
+                    filterGenres(editorGenre);
+                  }}
+                  onBlur={() => {
+                    // Delay hiding to allow selection
+                    setTimeout(() => setShowGenreDropdown(false), 200);
+                  }}
+                />
+                {showGenreDropdown && (
+                  <View style={[styles.genreDropdown, { backgroundColor: currentTheme.cardBackground, borderColor: currentTheme.border, opacity: 1 }]}>
+                    <ScrollView 
+                      style={styles.genreDropdownScroll}
+                      contentContainerStyle={styles.genreDropdownContent}
+                      showsVerticalScrollIndicator={true}
+                      keyboardShouldPersistTaps="handled"
+                      bounces={false}
+                      scrollEnabled={true}
+                      nestedScrollEnabled={true}
+                    >
+                      {filteredGenres.length > 0 ? (
+                        filteredGenres.map((genre, index) => (
+                          <TouchableOpacity
+                            key={genre}
+                            style={[
+                              styles.genreOption, 
+                              { 
+                                borderBottomColor: currentTheme.border,
+                                borderBottomWidth: index === filteredGenres.length - 1 ? 0 : 1
+                              }
+                            ]}
+                            onPress={() => selectGenre(genre)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.genreOptionText, { color: currentTheme.text }]}>{genre}</Text>
+                          </TouchableOpacity>
+                        ))
+                      ) : editorGenre.trim() ? (
                         <TouchableOpacity
-                          key={genre}
-                          style={[
-                            styles.genreOption, 
-                            { 
-                              borderBottomColor: currentTheme.border,
-                              borderBottomWidth: index === filteredGenres.length - 1 ? 0 : 1
-                            }
-                          ]}
-                          onPress={() => selectGenre(genre)}
+                          style={[styles.genreOption, { borderBottomColor: currentTheme.border, borderBottomWidth: 0 }]}
+                          onPress={createNewGenre}
                           activeOpacity={0.7}
                         >
-                          <Text style={[styles.genreOptionText, { color: currentTheme.text }]}>{genre}</Text>
+                          <Text style={[styles.genreOptionText, { color: currentTheme.accent }]}>
+                            Create "{editorGenre.trim()}"
+                          </Text>
                         </TouchableOpacity>
-                      ))
-                    ) : editorGenre.trim() ? (
-                      <TouchableOpacity
-                        style={[styles.genreOption, { borderBottomColor: currentTheme.border, borderBottomWidth: 0 }]}
-                        onPress={createNewGenre}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.genreOptionText, { color: currentTheme.accent }]}>
-                          Create "{editorGenre.trim()}"
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </ScrollView>
-                </View>
-              )}
+                      ) : null}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.scaleSection}>
+              <Text style={[styles.scaleLabel, { color: currentTheme.text }]}>Key</Text>
+              <View style={styles.scaleInputContainer}>
+                <TextInput
+                  style={[styles.scaleInput, { backgroundColor: currentTheme.inputBackground, borderColor: currentTheme.border, color: currentTheme.text }]}
+                  placeholder="Key"
+                  placeholderTextColor={currentTheme.textSecondary}
+                  value={editorScale}
+                  onChangeText={handleScaleInputChange}
+                  onFocus={() => {
+                    setShowScaleDropdown(true);
+                    setShowGenreDropdown(false); // Hide genre dropdown when scale is focused
+                    filterScales(editorScale);
+                  }}
+                  onBlur={() => {
+                    // Delay hiding to allow selection
+                    setTimeout(() => setShowScaleDropdown(false), 200);
+                  }}
+                />
+                {showScaleDropdown && (
+                  <View style={[styles.scaleDropdown, { backgroundColor: currentTheme.cardBackground, borderColor: currentTheme.border }]}>
+                    <ScrollView 
+                      style={styles.scaleDropdownScroll}
+                      contentContainerStyle={styles.scaleDropdownContent}
+                      showsVerticalScrollIndicator={true}
+                      keyboardShouldPersistTaps="handled"
+                      bounces={false}
+                      scrollEnabled={true}
+                      nestedScrollEnabled={true}
+                    >
+                      {filteredScales.length > 0 ? (
+                        filteredScales.map((scale, index) => (
+                          <TouchableOpacity
+                            key={scale}
+                            style={[
+                              styles.scaleOption, 
+                              { 
+                                borderBottomColor: currentTheme.border,
+                                borderBottomWidth: index === filteredScales.length - 1 ? 0 : 1
+                              }
+                            ]}
+                            onPress={() => selectScale(scale)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.scaleOptionText, { color: currentTheme.text }]}>{scale}</Text>
+                          </TouchableOpacity>
+                        ))
+                      ) : editorScale.trim() ? (
+                        <TouchableOpacity
+                          style={[styles.scaleOption, { borderBottomColor: currentTheme.border, borderBottomWidth: 0 }]}
+                          onPress={createNewScale}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.scaleOptionText, { color: currentTheme.accent }]}>
+                            Create "{editorScale.trim()}"
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
 
@@ -1028,7 +1348,7 @@ And the world will be as one
                     </TouchableOpacity>
                     <TouchableOpacity 
                       style={[styles.audioButton, { backgroundColor: currentTheme.buttonBackground }]} 
-                      onPress={isPlaying ? pauseAudio : () => playAudio(editorAudioUri)}
+                      onPress={isPlaying ? pauseAudio : () => playAudio(editorAudioUri, editorLocalPath)}
                     >
                       <Text style={[styles.audioButtonText, { color: currentTheme.buttonText }]}>
                         {isPlaying ? '⏸️' : '▶️'}
@@ -1151,7 +1471,7 @@ And the world will be as one
                     } else if (sound) {
                       resumeAudio();
                     } else if (currentLyrics?.audioUri) {
-                      playAudio(currentLyrics.audioUri);
+                      playAudio(currentLyrics.audioUri, currentLyrics.localPath);
                     }
                   }}
                 >
@@ -1175,6 +1495,16 @@ And the world will be as one
           contentContainerStyle={styles.lyricsScrollContent}
           showsVerticalScrollIndicator={true}
         >
+          <View style={[styles.lyricsInfoSection, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}>
+            <View style={styles.lyricsInfoRow}>
+              <Text style={[styles.lyricsInfoLabel, { color: currentTheme.textSecondary }]}>Genre:</Text>
+              <Text style={[styles.lyricsInfoValue, { color: currentTheme.text }]}>{currentLyrics.genre}</Text>
+            </View>
+            <View style={styles.lyricsInfoRow}>
+              <Text style={[styles.lyricsInfoLabel, { color: currentTheme.textSecondary }]}>Key:</Text>
+              <Text style={[styles.lyricsInfoValue, { color: currentTheme.text }]}>{currentLyrics.scale}</Text>
+            </View>
+          </View>
           <Text style={[styles.lyricsText, { color: currentTheme.text }]}>{currentLyrics.content}</Text>
         </ScrollView>
       </View>
@@ -1863,12 +2193,47 @@ const styles = StyleSheet.create({
     paddingBottom: 60,
     paddingTop: 20,
   },
+  lyricsInfoSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  lyricsInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  lyricsInfoLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  lyricsInfoValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+  },
   errorText: {
     fontSize: 18,
     color: '#666666',
     textAlign: 'center',
     marginTop: 50,
     fontWeight: '600',
+  },
+  // Genre and Key row styles
+  genreKeyRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    gap: 16,
   },
   // Genre styles
   genreItem: {
@@ -1930,7 +2295,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   genreSection: {
-    marginBottom: 16,
+    flex: 3,
+    zIndex: 1000,
+    elevation: 10,
   },
   genreLabel: {
     fontSize: 18,
@@ -1941,6 +2308,7 @@ const styles = StyleSheet.create({
   genreInputContainer: {
     position: 'relative',
     zIndex: 1000,
+    elevation: 10,
   },
   genreInput: {
     backgroundColor: '#f8f9fa',
@@ -1970,7 +2338,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 8,
-    elevation: 8,
+    elevation: 15,
     zIndex: 1001,
     maxHeight: 150,
     overflow: 'hidden',
@@ -1992,6 +2360,73 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   genreDropdownContent: {
+    flexGrow: 0,
+  },
+  // Scale styles
+  scaleSection: {
+    flex: 1,
+  },
+  scaleLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 12,
+  },
+  scaleInputContainer: {
+    position: 'relative',
+    zIndex: 500,
+    elevation: 5,
+  },
+  scaleInput: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: '#000000',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  scaleDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    marginTop: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 12,
+    zIndex: 1001,
+    maxHeight: 150,
+    overflow: 'hidden',
+  },
+  scaleOption: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  scaleOptionText: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  scaleDropdownScroll: {
+    maxHeight: 150,
+    flexGrow: 0,
+  },
+  scaleDropdownContent: {
     flexGrow: 0,
   },
   // Settings styles
